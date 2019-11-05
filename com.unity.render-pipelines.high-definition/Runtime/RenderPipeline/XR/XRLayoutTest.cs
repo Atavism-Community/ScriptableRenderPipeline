@@ -60,10 +60,6 @@ namespace UnityEngine.Rendering.HighDefinition
 
             if (camera != null && camera.cameraType == CameraType.Game && camera.TryGetCullingParameters(false, out var cullingParams))
             {
-                // XRTODO: scenes with multiple cameras
-                if (camera != Camera.main)
-                    return false;
-
                 cullingParams.stereoProjectionMatrix = camera.projectionMatrix;
                 cullingParams.stereoViewMatrix = camera.worldToCameraMatrix;
 
@@ -82,32 +78,52 @@ namespace UnityEngine.Rendering.HighDefinition
                     viewport = camera.pixelRect
                 };
 
-                // Pass 0 : single-pass 2x rendering to intermediate texture array
+                if (camera == Camera.main)
                 {
-                    passInfo.multipassId = 0;
-                    passInfo.renderTarget = texArrayTarget;
-                    passInfo.customMirrorView = MirrorComposite;
-
-                    XRPass pass = frameLayout.CreatePass(passInfo);
-
-                    for (int viewIndex = 0; viewIndex < TextureXR.slices; viewIndex++)
+                    // Pass 0 : single-pass 2x rendering to intermediate texture array
                     {
-                        viewInfo.textureArraySlice = viewIndex;
+                        passInfo.multipassId = 0;
+                        passInfo.renderTarget = texArrayTarget;
+                        passInfo.customMirrorView = MirrorComposite;
+
+                        XRPass pass = frameLayout.CreatePass(passInfo);
+
+                        for (int viewIndex = 0; viewIndex < TextureXR.slices; viewIndex++)
+                        {
+                            viewInfo.textureArraySlice = viewIndex;
+                            frameLayout.AddViewToPass(viewInfo, pass);
+                        }
+                    }
+
+                    // Pass 1 : multi-pass 1x rendering to double-wide target
+                    {
+                        passInfo.multipassId = 1;
+                        passInfo.renderTarget = doubleWideTarget;
+                        passInfo.customMirrorView = MirrorCompositeDoubleWide;
+
+                        XRPass pass = frameLayout.CreatePass(passInfo);
+
+                        viewInfo.viewport.x = viewInfo.viewport.width;
+                        viewInfo.textureArraySlice = -1;
                         frameLayout.AddViewToPass(viewInfo, pass);
                     }
                 }
-
-                // Pass 1 : multi-pass 1x rendering to double-wide target 
+                else
                 {
-                    passInfo.multipassId = 1;
-                    passInfo.renderTarget = doubleWideTarget;
-                    passInfo.customMirrorView = MirrorCompositeDoubleWide;
+                    // Pass 0 : single-pass 2x rendering to intermediate texture array
+                    {
+                        passInfo.multipassId = 0;
+                        passInfo.renderTarget = texArrayTarget;
+                        passInfo.customMirrorView = MirrorCompositeOneView;
 
-                    XRPass pass = frameLayout.CreatePass(passInfo);
+                        XRPass pass = frameLayout.CreatePass(passInfo);
 
-                    viewInfo.viewport.x = viewInfo.viewport.width;
-                    viewInfo.textureArraySlice = -1;
-                    frameLayout.AddViewToPass(viewInfo, pass);
+                        for (int viewIndex = 0; viewIndex < TextureXR.slices; viewIndex++)
+                        {
+                            viewInfo.textureArraySlice = viewIndex;
+                            frameLayout.AddViewToPass(viewInfo, pass);
+                        }
+                    }
                 }
 
                 return true;
@@ -118,6 +134,8 @@ namespace UnityEngine.Rendering.HighDefinition
 
         void MirrorComposite(XRPass pass, CommandBuffer cmd, RenderTexture rt, Rect viewport)
         {
+
+
             float oneOverViewCount = 1.0f / totalCompositeViews;
             var rtScaleSource = texArrayTarget.rtHandleProperties.rtHandleScale;
 
@@ -143,6 +161,36 @@ namespace UnityEngine.Rendering.HighDefinition
 
                 matBlock.SetInt(HDShaderIDs._BlitTexArraySlice, pass.GetTextureArraySlice(viewIndex));
                 matBlock.SetVector(HDShaderIDs._BlitScaleBias, new Vector4(dyn * rtScaleSource.x * oneOverViewCount, dyn * rtScaleSource.y / pass.viewCount, dyn * rtScaleSource.x * xBias, dyn * rtScaleSource.y * yBias));
+                matBlock.SetVector(HDShaderIDs._BlitScaleBiasRt, new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
+
+                cmd.SetViewport(viewport);
+                cmd.SetGlobalVector(HDShaderIDs._RTHandleScale, texArrayTarget.rtHandleProperties.rtHandleScale);
+                cmd.DrawProcedural(Matrix4x4.identity, blitMaterial, 2, MeshTopology.Quads, 4, 1, matBlock);
+            }
+        }
+
+        void MirrorCompositeOneView(XRPass pass, CommandBuffer cmd, RenderTexture rt, Rect viewport)
+        {
+            var rtScaleSource = texArrayTarget.rtHandleProperties.rtHandleScale;
+
+            cmd.SetRenderTarget(rt);
+
+            var blitMaterial = HDUtils.GetBlitMaterial(texArrayTarget.rt.dimension, singleSlice: true);
+            matBlock.SetTexture(HDShaderIDs._BlitTexture, texArrayTarget);
+            matBlock.SetFloat(HDShaderIDs._BlitMipLevel, 0);
+
+
+            int viewIndex = pass.viewCount - 1;
+            {
+                var dyn = 1.0f / DynamicResolutionHandler.instance.GetCurrentScale();
+
+                viewport.x = Mathf.Floor(viewport.x);
+                viewport.y = Mathf.Floor(viewport.y);
+                viewport.width = Mathf.Floor(viewport.width);
+                viewport.height = Mathf.Floor(viewport.height);
+
+                matBlock.SetInt(HDShaderIDs._BlitTexArraySlice, pass.GetTextureArraySlice(viewIndex));
+                matBlock.SetVector(HDShaderIDs._BlitScaleBias, new Vector4(dyn * rtScaleSource.x, dyn * rtScaleSource.y, dyn * rtScaleSource.x * viewport.x / viewport.width, dyn * rtScaleSource.y * viewport.y / viewport.height));
                 matBlock.SetVector(HDShaderIDs._BlitScaleBiasRt, new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
 
                 cmd.SetViewport(viewport);
