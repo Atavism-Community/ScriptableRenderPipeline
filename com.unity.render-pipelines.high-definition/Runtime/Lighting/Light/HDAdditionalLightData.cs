@@ -1689,8 +1689,9 @@ namespace UnityEngine.Rendering.HighDefinition
             float softness = 0.0f;
             if (lightType == HDLightType.Directional)
             {
+                
                 var devProj = shadowRequest.deviceProjection;
-                Vector3 FrustumExtents = new Vector3(
+                Vector3 frustumExtents = new Vector3(
                     2.0f * (devProj.m00 * devProj.m33 - devProj.m03 * devProj.m30) /
                          (devProj.m00 * devProj.m00 - devProj.m30 * devProj.m30),
                     2.0f * (devProj.m11 * devProj.m33 - devProj.m13 * devProj.m31) /
@@ -1698,10 +1699,11 @@ namespace UnityEngine.Rendering.HighDefinition
                     Vector4.Dot(new Vector4(devProj.m32, -devProj.m32, -devProj.m22, devProj.m22), new Vector4(devProj.m22, devProj.m32, devProj.m23, devProj.m33)) /
                         (devProj.m22 * (devProj.m22 - devProj.m32))
                 );
-
+                // We use the light view frustum derived from view projection matrix and angular diameter to work out a filter size in
+                // shadow map space, essentially figuring out the footprint of the cone subtended by the light on the shadow map
                 float halfAngleTan = 0.5f * Mathf.Tan(0.5f * Mathf.Deg2Rad * m_AngularDiameter / 2);
-                float lightFactor1 = halfAngleTan * FrustumExtents.z / FrustumExtents.x;
-                float lightFactor2 = halfAngleTan * FrustumExtents.z / FrustumExtents.y;
+                float lightFactor1 = halfAngleTan * frustumExtents.z / frustumExtents.x;
+                float lightFactor2 = halfAngleTan * frustumExtents.z / frustumExtents.y;
                 softness = Mathf.Sqrt(lightFactor1 * lightFactor1 + lightFactor2 * lightFactor2);
             }
             else
@@ -1723,7 +1725,7 @@ namespace UnityEngine.Rendering.HighDefinition
             {
                 if(softness > 0.01f)
                 {
-                    // 15.0f is an empirically set value, also the lerp stops at a shadow softness of 0.05, then is clamped.
+                    // maxBaseBias is an empirically set value, also the lerp stops at a shadow softness of 0.05, then is clamped.
                     float maxBaseBias = 18.0f;
                     baseBias = Mathf.Lerp(baseBias, maxBaseBias, Mathf.Min(1.0f, (softness * 100) / 5));
                 }
