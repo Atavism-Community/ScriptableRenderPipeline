@@ -82,6 +82,7 @@ namespace UnityEngine.Rendering.HighDefinition
 
         readonly PostProcessSystem m_PostProcessSystem;
         readonly XRSystem m_XRSystem;
+        readonly XRLayoutTest m_XRLayoutTest;
 
         bool m_FrameSettingsHistoryEnabled = false;
 
@@ -340,8 +341,10 @@ namespace UnityEngine.Rendering.HighDefinition
             RTHandles.Initialize(1, 1, m_Asset.currentPlatformRenderPipelineSettings.supportMSAA, m_Asset.currentPlatformRenderPipelineSettings.msaaSampleCount);
 
             m_XRSystem = new XRSystem(asset.renderPipelineResources.shaders);
-            m_GPUCopy = new GPUCopy(defaultResources.shaders.copyChannelCS);
+            if (XRSystem.testModeEnabled)
+                m_XRLayoutTest = new XRLayoutTest();
 
+            m_GPUCopy = new GPUCopy(defaultResources.shaders.copyChannelCS);
             m_MipGenerator = new MipGenerator(defaultResources);
             m_BlueNoise = new BlueNoise(defaultResources);
 
@@ -831,6 +834,7 @@ namespace UnityEngine.Rendering.HighDefinition
             CleanupSubsurfaceScattering();
             m_SharedRTManager.Cleanup();
             m_XRSystem.Cleanup();
+            m_XRLayoutTest?.Cleanup();
             m_SkyManager.Cleanup();
             CleanupVolumetricLighting();
 
@@ -1163,6 +1167,8 @@ namespace UnityEngine.Rendering.HighDefinition
                 }
             }
             );
+
+            m_XRLayoutTest?.Update(m_DebugDisplaySettings.data.xrLayout);
 
             using (ListPool<RenderRequest>.Get(out List<RenderRequest> renderRequests))
             using (ListPool<int>.Get(out List<int> rootRenderRequestIndices))
@@ -2227,17 +2233,16 @@ namespace UnityEngine.Rendering.HighDefinition
             if (!HDUtils.PostProcessIsFinalPass() || aovRequest.isValid || hasAfterPostProcessCustomPass)
             {
                 hdCamera.ExecuteCaptureActions(m_IntermediateAfterPostProcessBuffer, cmd);
-
                 RenderDebug(hdCamera, cmd, cullingResults);
+                hdCamera.xr.StopSinglePass(cmd, hdCamera.camera, renderContext);
+
                 using (new ProfilingSample(cmd, "Final Blit (Dev Build Only)"))
                 {
-                    var finalBlitParams = PrepareFinalBlitParameters(hdCamera);
-
-                    // Disable XR single-pass if we need to a blit only one slice
-                    if (finalBlitParams.srcTexArraySlice >= 0)
-                        hdCamera.xr.StopSinglePass(cmd, hdCamera.camera, renderContext);
-
-                    BlitFinalCameraTexture(finalBlitParams, m_BlitPropertyBlock, m_IntermediateAfterPostProcessBuffer, target.id, cmd);
+                    for (int viewIndex = 0; viewIndex < hdCamera.viewCount; ++viewIndex)
+                    {
+                        var finalBlitParams = PrepareFinalBlitParameters(hdCamera, viewIndex);
+                        BlitFinalCameraTexture(finalBlitParams, m_BlitPropertyBlock, m_IntermediateAfterPostProcessBuffer, target.id, cmd);
+                    }
                 }
 
                 aovRequest.PushCameraTexture(cmd, AOVBuffers.Output, hdCamera, m_IntermediateAfterPostProcessBuffer, aovBuffers);
@@ -2302,19 +2307,25 @@ namespace UnityEngine.Rendering.HighDefinition
         internal RTHandle GetExposureTexture(HDCamera hdCamera) =>
             m_PostProcessSystem.GetExposureTexture(hdCamera);
 
-        BlitFinalCameraTextureParameters PrepareFinalBlitParameters(HDCamera hdCamera)
+        BlitFinalCameraTextureParameters PrepareFinalBlitParameters(HDCamera hdCamera, int viewIndex)
         {
             var parameters = new BlitFinalCameraTextureParameters();
 
-            // Blit only the last slice if specified by layout override
-            parameters.srcTexArraySlice = (XRSystem.layoutOverride == XRLayoutOverride.TestSinglePassOneEye) ? (hdCamera.viewCount - 1) : -1;
-
-            // Blit to the requested array slice or bind them all (-1)
-            parameters.dstTexArraySlice = hdCamera.xr.enabled ? hdCamera.xr.dstSliceIndex : -1;
+            if (hdCamera.xr.enabled)
+            {
+                parameters.viewport = hdCamera.xr.GetViewport(viewIndex);
+                parameters.srcTexArraySlice = viewIndex;
+                parameters.dstTexArraySlice = hdCamera.xr.GetTextureArraySlice(viewIndex);
+            }
+            else
+            {
+                parameters.viewport = hdCamera.finalViewport;
+                parameters.srcTexArraySlice = -1;
+                parameters.dstTexArraySlice = -1;
+            }
 
             parameters.flip = hdCamera.flipYMode == HDAdditionalCameraData.FlipYMode.ForceFlipY || hdCamera.isMainGameView;
             parameters.blitMaterial = HDUtils.GetBlitMaterial(TextureXR.useTexArray ? TextureDimension.Tex2DArray : TextureDimension.Tex2D, singleSlice: parameters.srcTexArraySlice >= 0);
-            parameters.viewport = hdCamera.finalViewport;
 
             return parameters;
         }

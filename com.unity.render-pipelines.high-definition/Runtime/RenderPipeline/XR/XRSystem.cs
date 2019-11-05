@@ -11,27 +11,45 @@ using UnityEngine.XR;
 
 namespace UnityEngine.Rendering.HighDefinition
 {
-    // XRTODO: custom user defined views + culling
-    internal enum XRLayoutOverride
-    {
-        None,                       // default layout
-        TestComposite,              // split the  into tiles to simulate multi-pass
-        TestSinglePassOneEye,       // render only eye with single-pass path
-    }
-
-    internal class XRSystem
+    internal partial class XRSystem
     {
         // Valid empty pass when a camera is not using XR
         internal readonly XRPass emptyPass = new XRPass();
 
-        // Display layout override property
-        internal static XRLayoutOverride layoutOverride { get; set; } = XRLayoutOverride.None;
-
-        // Used by test framework
+        // Used by test framework and to enable debug features
         internal static bool testModeEnabled { get => Array.Exists(Environment.GetCommandLineArgs(), arg => arg == "-xr-tests"); }
 
         // Store active passes and avoid allocating memory every frames
         List<(Camera, XRPass)> framePasses = new List<(Camera, XRPass)>();
+
+#if DEVELOPMENT_BUILD || UNITY_EDITOR
+        internal static bool printDebugInfo = false;
+        internal static List<string> passDebugInfos = new List<string>(8);
+        internal static string ReadPassDebugInfo(int i) => passDebugInfos[i];
+#endif
+
+        //  rename? wip public API, move to file?
+        internal struct FrameLayout
+        {
+            public Camera camera;
+            public XRSystem xrSystem;
+
+            public XRPass CreatePass(XRPassCreateInfo createInfo)
+            {
+                XRPass pass = XRPass.Create(createInfo);
+                xrSystem.AddPassToFrame(camera, pass);
+                return pass;
+            }
+
+            public void AddViewToPass(XRViewCreateInfo info, XRPass pass)
+            {
+                pass.AddView(info.projMatrix, info.viewMatrix, info.viewport, info.textureArraySlice);
+            }
+        }
+
+        public delegate bool CustomFrameSetup(FrameLayout frameLayout);
+        private static CustomFrameSetup customFrameSetup = null;
+        static public void SetCustomFrameSetup(CustomFrameSetup setup) => customFrameSetup = setup;
 
 #if ENABLE_VR && ENABLE_XR_MODULE
         // XR SDK display interface
@@ -56,7 +74,7 @@ namespace UnityEngine.Rendering.HighDefinition
             }
 #endif
             // XRTODO: replace by dynamic render graph
-            TextureXR.maxViews = GetMaxViews();
+            TextureXR.maxViews = Math.Max(TextureXR.slices, GetMaxViews());
         }
 
 #if ENABLE_VR && ENABLE_XR_MODULE
@@ -87,9 +105,6 @@ namespace UnityEngine.Rendering.HighDefinition
             {
                 if (XRGraphics.stereoRenderingMode == XRGraphics.StereoRenderingMode.SinglePassInstanced)
                     maxViews = 2;
-
-                if (testModeEnabled)
-                    maxViews = 2;
             }
 
             return maxViews;
@@ -110,18 +125,17 @@ namespace UnityEngine.Rendering.HighDefinition
                 if (camera == null)
                     continue;
 
-#if ENABLE_VR && ENABLE_VR_MODULE
                 // Read XR SDK or legacy settings
                 bool xrEnabled = xrSdkActive || (camera.stereoEnabled && XRGraphics.enabled);
 
                 // Enable XR layout only for gameview camera
                 bool xrSupported = camera.cameraType == CameraType.Game && camera.targetTexture == null;
 
-                // Debug modes can override the entire layout
-                if (ProcessDebugMode(xrEnabled, camera))
-                    continue;
-
-                if (xrEnabled && xrSupported)
+                if (customFrameSetup != null && customFrameSetup(new FrameLayout() { camera = camera, xrSystem = this }))
+                {
+                    // custom layout in used
+                }
+                else if (xrEnabled && xrSupported)
                 {
                     if (XRGraphics.renderViewportScale != 1.0f)
                     {
@@ -138,11 +152,32 @@ namespace UnityEngine.Rendering.HighDefinition
                     }
                 }
                 else
-#endif
                 {
                     AddPassToFrame(camera, emptyPass);
                 }
             }
+
+            // TODO : move to function
+#if DEVELOPMENT_BUILD || UNITY_EDITOR
+            if (printDebugInfo)
+            {
+                passDebugInfos.Clear();
+
+                for (int passIndex = 0; passIndex < framePasses.Count; passIndex++)
+                {
+                    var pass = framePasses[passIndex];
+                    for (int viewIndex = 0; viewIndex < pass.Item2.viewCount; viewIndex++)
+                    {
+                        var viewport = pass.Item2.GetViewport(viewIndex);
+                        passDebugInfos.Add(string.Format("Pass {0} Cull {1} View {2} Slice {3} : {4} x {5}",
+                            pass.Item2.multipassId, pass.Item2.cullingPassId, viewIndex, pass.Item2.GetTextureArraySlice(viewIndex), viewport.width, viewport.height));
+                    }
+                }
+            }
+
+            while (passDebugInfos.Count < passDebugInfos.Capacity)
+                passDebugInfos.Add("inactive");
+#endif
 
             return framePasses;
         }
@@ -190,26 +225,46 @@ namespace UnityEngine.Rendering.HighDefinition
                 return;
             }
 
+            var passCreateInfo = new XRPassCreateInfo
+            {
+                multipassId = 0,
+                cullingPassId = 0,
+                cullingParameters = cullingParams,
+                renderTarget = camera.targetTexture,
+                customMirrorView = null
+            };
+
             if (XRGraphics.stereoRenderingMode == XRGraphics.StereoRenderingMode.MultiPass)
             {
-                for (int passIndex = 0; passIndex < 2; ++passIndex)
+                if (camera.stereoTargetEye == StereoTargetEyeMask.Both || camera.stereoTargetEye == StereoTargetEyeMask.Left)
                 {
-                    var xrPass = XRPass.Create(multipassId: passIndex, cullingPassId: 0, cullingParams);
-                    xrPass.AddView(camera, (Camera.StereoscopicEye)passIndex);
+                    var pass = XRPass.Create(passCreateInfo);
+                    pass.AddView(camera, Camera.StereoscopicEye.Left, 0);
 
-                    AddPassToFrame(camera, xrPass);
+                    AddPassToFrame(camera, pass);
+                    passCreateInfo.multipassId++;
+                }
+                    
+
+                if (camera.stereoTargetEye == StereoTargetEyeMask.Both || camera.stereoTargetEye == StereoTargetEyeMask.Right)
+                {
+                    var pass = XRPass.Create(passCreateInfo);
+                    pass.AddView(camera, Camera.StereoscopicEye.Right, 1);
+
+                    AddPassToFrame(camera, pass);
                 }
             }
             else
             {
-                var xrPass = XRPass.Create(multipassId: 0, cullingPassId: 0, cullingParams);
+                var pass = XRPass.Create(passCreateInfo);
 
-                for (int viewIndex = 0; viewIndex < 2; ++viewIndex)
-                {
-                    xrPass.AddView(camera, (Camera.StereoscopicEye)viewIndex);
-                }
+                if (camera.stereoTargetEye == StereoTargetEyeMask.Both || camera.stereoTargetEye == StereoTargetEyeMask.Left)
+                    pass.AddView(camera, Camera.StereoscopicEye.Left, 0);
 
-               AddPassToFrame(camera, xrPass);
+                if (camera.stereoTargetEye == StereoTargetEyeMask.Both || camera.stereoTargetEye == StereoTargetEyeMask.Right)
+                    pass.AddView(camera, Camera.StereoscopicEye.Right, 1);
+
+               AddPassToFrame(camera, pass);
             }
         }
 
@@ -243,7 +298,7 @@ namespace UnityEngine.Rendering.HighDefinition
 
                 if (CanUseSinglePass(renderPass))
                 {
-                    var xrPass = XRPass.Create(renderPass, multipassId: framePasses.Count, textureArraySlice: -1, cullingParams, occlusionMeshMaterial);
+                    var xrPass = XRPass.Create(renderPass, multipassId: framePasses.Count, cullingParams, occlusionMeshMaterial);
 
                     for (int renderParamIndex = 0; renderParamIndex < renderPass.GetRenderParameterCount(); ++renderParamIndex)
                     {
@@ -259,7 +314,7 @@ namespace UnityEngine.Rendering.HighDefinition
                     {
                         renderPass.GetRenderParameter(camera, renderParamIndex, out var renderParam);
 
-                        var xrPass = XRPass.Create(renderPass, multipassId: framePasses.Count, textureArraySlice: renderParam.textureArraySlice, cullingParams, occlusionMeshMaterial);
+                        var xrPass = XRPass.Create(renderPass, multipassId: framePasses.Count, cullingParams, occlusionMeshMaterial);
                         xrPass.AddView(renderPass, renderParam);
 
                         AddPassToFrame(camera, xrPass);
@@ -271,6 +326,8 @@ namespace UnityEngine.Rendering.HighDefinition
 
         internal void Cleanup()
         {
+            customFrameSetup = null;
+
 #if ENABLE_VR && ENABLE_XR_MODULE
             CoreUtils.Destroy(occlusionMeshMaterial);
             CoreUtils.Destroy(mirrorViewMaterial);
@@ -324,78 +381,6 @@ namespace UnityEngine.Rendering.HighDefinition
                 }
             }
 #endif
-        }
-
-        bool ProcessDebugMode(bool xrEnabled, Camera camera)
-        {
-            if (layoutOverride == XRLayoutOverride.None || camera.cameraType != CameraType.Game || xrEnabled)
-                return false;
-
-            if (camera.TryGetCullingParameters(false, out var cullingParams))
-            {
-                cullingParams.stereoProjectionMatrix = camera.projectionMatrix;
-                cullingParams.stereoViewMatrix = camera.worldToCameraMatrix;
-            }
-            else
-            {
-                Debug.LogError("Unable to get Culling Parameters from camera!");
-                return false;
-            }
-
-            if (layoutOverride == XRLayoutOverride.TestSinglePassOneEye)
-            {
-                var xrPass = XRPass.Create(multipassId: framePasses.Count, cullingPassId: 0, cullingParams, camera.targetTexture);
-
-                // 2x single-pass
-                for (int i = 0; i < 2; ++i)
-                    xrPass.AddView(camera.projectionMatrix, camera.worldToCameraMatrix, camera.pixelRect);
-
-                AddPassToFrame(camera, xrPass);
-            }
-            else if (layoutOverride == XRLayoutOverride.TestComposite)
-            {
-                Rect fullViewport = camera.pixelRect;
-
-                // Split into 4 tiles covering the original viewport
-                int tileCountX = 2;
-                int tileCountY = 2;
-                float splitRatio = 2.0f;
-
-                // Use frustum planes to split the projection into 4 parts
-                var frustumPlanes = camera.projectionMatrix.decomposeProjection;
-
-                for (int tileY = 0; tileY < tileCountY; ++tileY)
-                {
-                    for (int tileX = 0; tileX < tileCountX; ++tileX)
-                    {
-                        var xrPass = XRPass.Create(multipassId: framePasses.Count, cullingPassId: 0, cullingParams, camera.targetTexture);
-
-                        float spliRatioX1 = Mathf.Pow((tileX + 0.0f) / tileCountX, splitRatio);
-                        float spliRatioX2 = Mathf.Pow((tileX + 1.0f) / tileCountX, splitRatio);
-                        float spliRatioY1 = Mathf.Pow((tileY + 0.0f) / tileCountY, splitRatio);
-                        float spliRatioY2 = Mathf.Pow((tileY + 1.0f) / tileCountY, splitRatio);
-
-                        var planes = frustumPlanes;
-                        planes.left = Mathf.Lerp(frustumPlanes.left, frustumPlanes.right, spliRatioX1);
-                        planes.right = Mathf.Lerp(frustumPlanes.left, frustumPlanes.right, spliRatioX2);
-                        planes.bottom = Mathf.Lerp(frustumPlanes.bottom, frustumPlanes.top, spliRatioY1);
-                        planes.top = Mathf.Lerp(frustumPlanes.bottom, frustumPlanes.top, spliRatioY2);
-
-                        float tileOffsetX = spliRatioX1 * fullViewport.width;
-                        float tileOffsetY = spliRatioY1 * fullViewport.height;
-                        float tileSizeX = spliRatioX2 * fullViewport.width - tileOffsetX;
-                        float tileSizeY = spliRatioY2 * fullViewport.height - tileOffsetY;
-
-                        Rect viewport = new Rect(fullViewport.x + tileOffsetX, fullViewport.y + tileOffsetY, tileSizeX, tileSizeY);
-                        Matrix4x4 proj = camera.orthographic ? Matrix4x4.Ortho(planes.left, planes.right, planes.bottom, planes.top, planes.zNear, planes.zFar) : Matrix4x4.Frustum(planes);
-
-                        xrPass.AddView(proj, camera.worldToCameraMatrix, viewport);
-                        AddPassToFrame(camera, xrPass);
-                    }
-                }
-            }
-
-            return true;
         }
     }
 }

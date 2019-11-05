@@ -65,6 +65,8 @@ namespace UnityEngine.Rendering.HighDefinition
         static int[] s_MaterialFullScreenDebugValues = null;
         static GUIContent[] s_MsaaSamplesDebugStrings = null;
         static int[] s_MsaaSamplesDebugValues = null;
+        static GUIContent[] s_XrLayoutDebugStrings = null;
+        static int[] s_XrLayoutDebugValues = null;
 
         static List<GUIContent> s_CameraNames = new List<GUIContent>();
         static GUIContent[] s_CameraNamesStrings = null;
@@ -89,6 +91,7 @@ namespace UnityEngine.Rendering.HighDefinition
             public DecalsDebugSettings decalsDebugSettings = new DecalsDebugSettings();
             public TransparencyDebugSettings transparencyDebugSettings = new TransparencyDebugSettings();
             public MSAASamples msaaSamples = MSAASamples.None;
+            internal XRLayoutTest.Mode xrLayout = XRLayoutTest.Mode.Default;
 
             public uint screenSpaceShadowIndex = 0;
             // Raytracing
@@ -119,6 +122,7 @@ namespace UnityEngine.Rendering.HighDefinition
             public int colorPickerDebugModeEnumIndex;
             public int msaaSampleDebugModeEnumIndex;
             public int debugCameraToFreezeEnumIndex;
+            public int xrLayoutDebugModeEnumIndex;
 
             // When settings mutually exclusives enum values, we need to reset the other ones.
             public void ResetExclusiveEnumIndices()
@@ -154,6 +158,11 @@ namespace UnityEngine.Rendering.HighDefinition
                 .Select(t => new GUIContent(t))
                 .ToArray();
             s_MsaaSamplesDebugValues = (int[])Enum.GetValues(typeof(MSAASamples));
+
+            s_XrLayoutDebugStrings = Enum.GetNames(typeof(XRLayoutTest.Mode))
+                .Select(t => new GUIContent(t))
+                .ToArray();
+            s_XrLayoutDebugValues = (int[])Enum.GetValues(typeof(XRLayoutTest.Mode));
 
             m_Data = new DebugData();
         }
@@ -402,6 +411,15 @@ namespace UnityEngine.Rendering.HighDefinition
                         */
                     }
                 });
+            }
+
+            list.Add(new DebugUI.BoolField { displayName = "Debug XR Layout", getter = () => XRSystem.printDebugInfo, setter = value => XRSystem.printDebugInfo = value, onValueChanged = RefreshDisplayStatsDebug });
+            if (XRSystem.printDebugInfo)
+            {
+                Func<object> Bind<T>(Func<T, object> func, T arg) => () => func(arg);
+
+                for (int i = 0; i < XRSystem.passDebugInfos.Count; i++)
+                    list.Add(new DebugUI.Value { displayName = "", getter = Bind(XRSystem.ReadPassDebugInfo, i) });
             }
 
             m_DebugDisplayStatsItems = list.ToArray();
@@ -731,7 +749,7 @@ namespace UnityEngine.Rendering.HighDefinition
             var panel = DebugManager.instance.GetPanel(k_PanelLighting, true);
             panel.children.Add(m_DebugLightingItems);
         }
-        public void RegisterRenderingDebug()
+        internal void RegisterRenderingDebug()
         {
             var widgetList = new List<DebugUI.Widget>();
 
@@ -804,6 +822,14 @@ namespace UnityEngine.Rendering.HighDefinition
             {
                 new DebugUI.EnumField { displayName = "Freeze Camera for culling", getter = () => data.debugCameraToFreeze, setter = value => data.debugCameraToFreeze = value, enumNames = s_CameraNamesStrings, enumValues = s_CameraNamesValues, getIndex = () => data.debugCameraToFreezeEnumIndex, setIndex = value => data.debugCameraToFreezeEnumIndex = value },
             });
+
+            if (XRSystem.testModeEnabled)
+            {
+                widgetList.AddRange(new DebugUI.Widget[]
+                {
+                    new DebugUI.EnumField { displayName = "XR Layout", getter = () => (int)data.xrLayout, setter = value => data.xrLayout = (XRLayoutTest.Mode)value, enumNames = s_XrLayoutDebugStrings, enumValues = s_XrLayoutDebugValues, getIndex = () => data.xrLayoutDebugModeEnumIndex, setIndex = value => data.xrLayoutDebugModeEnumIndex = value },
+                });
+            }
 
             m_DebugRenderingItems = widgetList.ToArray();
             var panel = DebugManager.instance.GetPanel(k_PanelRendering, true);
