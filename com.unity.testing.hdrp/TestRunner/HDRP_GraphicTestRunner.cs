@@ -37,11 +37,11 @@ public class HDRP_GraphicTestRunner
         {
             if (settings.xrCompatible)
             {
-                XRLayoutTest.automatedTestRunning = true;
+                XRSystem.automatedTestRunning = true;
 
                 // Increase tolerance to account for slight changes due to float precision
-                settings.ImageComparisonSettings.AverageCorrectnessThreshold *= 3.0f;
-                settings.ImageComparisonSettings.PerPixelCorrectnessThreshold *= 3.0f;
+                settings.ImageComparisonSettings.AverageCorrectnessThreshold *= 1.5f;
+                settings.ImageComparisonSettings.PerPixelCorrectnessThreshold *= 1.5f;
             }
             else
             {
@@ -144,7 +144,7 @@ public class HDRP_GraphicTestRunner
     [TearDown]
     public void ResetSystemState()
     {
-        XRLayoutTest.automatedTestRunning = false;
+        XRSystem.automatedTestRunning = false;
     }
 #endif
 

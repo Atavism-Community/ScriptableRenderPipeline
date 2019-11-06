@@ -1,9 +1,11 @@
-// XRSystem is where information about XR views and passes are read from 2 exclusive sources:
+// XRSystem is where information about XR views and passes are read from 3 exclusive sources:
 // - XRDisplaySubsystem from the XR SDK
-// - or the 'legacy' C++ stereo rendering path and XRSettings (will be removed in 2020.1)
+// - the 'legacy' C++ stereo rendering path and XRSettings
+// - custom XR layout (only internal for now)
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 #if ENABLE_VR && ENABLE_XR_MODULE
 using UnityEngine.XR;
@@ -16,40 +18,13 @@ namespace UnityEngine.Rendering.HighDefinition
         // Valid empty pass when a camera is not using XR
         internal readonly XRPass emptyPass = new XRPass();
 
-        // Used by test framework and to enable debug features
-        internal static bool testModeEnabled { get => Array.Exists(Environment.GetCommandLineArgs(), arg => arg == "-xr-tests"); }
-
         // Store active passes and avoid allocating memory every frames
         List<(Camera, XRPass)> framePasses = new List<(Camera, XRPass)>();
 
-#if DEVELOPMENT_BUILD || UNITY_EDITOR
-        internal static bool printDebugInfo = false;
-        internal static List<string> passDebugInfos = new List<string>(8);
-        internal static string ReadPassDebugInfo(int i) => passDebugInfos[i];
-#endif
-
-        //  rename? wip public API, move to file?
-        internal struct FrameLayout
-        {
-            public Camera camera;
-            public XRSystem xrSystem;
-
-            public XRPass CreatePass(XRPassCreateInfo createInfo)
-            {
-                XRPass pass = XRPass.Create(createInfo);
-                xrSystem.AddPassToFrame(camera, pass);
-                return pass;
-            }
-
-            public void AddViewToPass(XRViewCreateInfo info, XRPass pass)
-            {
-                pass.AddView(info.projMatrix, info.viewMatrix, info.viewport, info.textureArraySlice);
-            }
-        }
-
-        public delegate bool CustomFrameSetup(FrameLayout frameLayout);
-        private static CustomFrameSetup customFrameSetup = null;
-        static public void SetCustomFrameSetup(CustomFrameSetup setup) => customFrameSetup = setup;
+        // XRTODO: expose and document public API for custom layout
+        internal delegate bool CustomLayout(XRLayout layout);
+        private static CustomLayout customLayout = null;
+        static internal void SetCustomLayout(CustomLayout cb) => customLayout = cb;
 
 #if ENABLE_VR && ENABLE_XR_MODULE
         // XR SDK display interface
@@ -60,6 +35,18 @@ namespace UnityEngine.Rendering.HighDefinition
         Material occlusionMeshMaterial = null;
         Material mirrorViewMaterial = null;
         MaterialPropertyBlock mirrorViewMaterialProperty = new MaterialPropertyBlock();
+#endif
+
+        // Set by test framework
+        internal static bool automatedTestRunning = false;
+
+        // Used by test framework and to enable debug features
+        internal static bool testModeEnabled { get => Array.Exists(Environment.GetCommandLineArgs(), arg => arg == "-xr-tests"); }
+
+#if DEVELOPMENT_BUILD || UNITY_EDITOR
+        internal static bool dumpDebugInfo = false;
+        internal static List<string> passDebugInfos = new List<string>(8);
+        internal static string ReadPassDebugInfo(int i) => passDebugInfos[i];
 #endif
 
         internal XRSystem(RenderPipelineResources.ShaderResources shaders)
@@ -73,6 +60,7 @@ namespace UnityEngine.Rendering.HighDefinition
                 mirrorViewMaterial = CoreUtils.CreateEngineMaterial(shaders.xrMirrorViewPS);
             }
 #endif
+
             // XRTODO: replace by dynamic render graph
             TextureXR.maxViews = Math.Max(TextureXR.slices, GetMaxViews());
         }
@@ -107,10 +95,13 @@ namespace UnityEngine.Rendering.HighDefinition
                     maxViews = 2;
             }
 
+            if (testModeEnabled)
+                maxViews = Math.Max(maxViews, 2);
+
             return maxViews;
         }
 
-        internal List<(Camera, XRPass)> SetupFrame(Camera[] cameras)
+        internal List<(Camera, XRPass)> SetupFrame(Camera[] cameras, bool singlePassTestModeActive)
         {
             bool xrSdkActive = RefreshXrSdk();
 
@@ -119,6 +110,11 @@ namespace UnityEngine.Rendering.HighDefinition
                 Debug.LogWarning("XRSystem.ReleaseFrame() was not called!");
                 ReleaseFrame();
             }
+
+            if (testModeEnabled && (singlePassTestModeActive || automatedTestRunning))
+                SetCustomLayout(LayoutSinglePassTestMode);
+            else
+                SetCustomLayout(null);
 
             foreach (var camera in cameras)
             {
@@ -131,7 +127,7 @@ namespace UnityEngine.Rendering.HighDefinition
                 // Enable XR layout only for gameview camera
                 bool xrSupported = camera.cameraType == CameraType.Game && camera.targetTexture == null;
 
-                if (customFrameSetup != null && customFrameSetup(new FrameLayout() { camera = camera, xrSystem = this }))
+                if (customLayout != null && customLayout(new XRLayout() { camera = camera, xrSystem = this }))
                 {
                     // custom layout in used
                 }
@@ -157,27 +153,7 @@ namespace UnityEngine.Rendering.HighDefinition
                 }
             }
 
-            // TODO : move to function
-#if DEVELOPMENT_BUILD || UNITY_EDITOR
-            if (printDebugInfo)
-            {
-                passDebugInfos.Clear();
-
-                for (int passIndex = 0; passIndex < framePasses.Count; passIndex++)
-                {
-                    var pass = framePasses[passIndex];
-                    for (int viewIndex = 0; viewIndex < pass.Item2.viewCount; viewIndex++)
-                    {
-                        var viewport = pass.Item2.GetViewport(viewIndex);
-                        passDebugInfos.Add(string.Format("Pass {0} Cull {1} View {2} Slice {3} : {4} x {5}",
-                            pass.Item2.multipassId, pass.Item2.cullingPassId, viewIndex, pass.Item2.GetTextureArraySlice(viewIndex), viewport.width, viewport.height));
-                    }
-                }
-            }
-
-            while (passDebugInfos.Count < passDebugInfos.Capacity)
-                passDebugInfos.Add("inactive");
-#endif
+            CaptureDebugInfo();
 
             return framePasses;
         }
@@ -326,7 +302,7 @@ namespace UnityEngine.Rendering.HighDefinition
 
         internal void Cleanup()
         {
-            customFrameSetup = null;
+            customLayout = null;
 
 #if ENABLE_VR && ENABLE_XR_MODULE
             CoreUtils.Destroy(occlusionMeshMaterial);
@@ -381,6 +357,75 @@ namespace UnityEngine.Rendering.HighDefinition
                 }
             }
 #endif
+        }
+
+        [Conditional("DEVELOPMENT_BUILD"), Conditional("UNITY_EDITOR")]
+        void CaptureDebugInfo()
+        {
+            if (dumpDebugInfo)
+            {
+                passDebugInfos.Clear();
+
+                for (int passIndex = 0; passIndex < framePasses.Count; passIndex++)
+                {
+                    var pass = framePasses[passIndex].Item2;
+                    for (int viewIndex = 0; viewIndex < pass.viewCount; viewIndex++)
+                    {
+                        var viewport = pass.GetViewport(viewIndex);
+                        passDebugInfos.Add(string.Format("Pass {0} Cull {1} View {2} Slice {3} : {4} x {5}",
+                            pass.multipassId,
+                            pass.cullingPassId,
+                            viewIndex,
+                            pass.GetTextureArraySlice(viewIndex),
+                            viewport.width,
+                            viewport.height));
+                    }
+                }
+            }
+
+            while (passDebugInfos.Count < passDebugInfos.Capacity)
+                passDebugInfos.Add("inactive");
+        }
+
+        bool LayoutSinglePassTestMode(XRLayout frameLayout)
+        {
+            Camera camera = frameLayout.camera;
+
+            if (camera != null && camera.cameraType == CameraType.Game && camera.TryGetCullingParameters(false, out var cullingParams))
+            {
+                cullingParams.stereoProjectionMatrix = camera.projectionMatrix;
+                cullingParams.stereoViewMatrix = camera.worldToCameraMatrix;
+
+                var passInfo = new XRPassCreateInfo
+                {
+                    multipassId = 0,
+                    cullingPassId = 0,
+                    cullingParameters = cullingParams,
+                    renderTarget = camera.targetTexture,
+                    customMirrorView = null
+                };
+
+                var viewInfo = new XRViewCreateInfo
+                {
+                    projMatrix = camera.projectionMatrix,
+                    viewMatrix = camera.worldToCameraMatrix,
+                    viewport = camera.pixelRect,
+                    textureArraySlice = -1
+                };
+
+                // single-pass 2x rendering
+                {
+                    XRPass pass = frameLayout.CreatePass(passInfo);
+
+                    for (int viewIndex = 0; viewIndex < TextureXR.slices; viewIndex++)
+                        frameLayout.AddViewToPass(viewInfo, pass);
+                }
+
+                // valid layout
+                return true;
+            }
+
+            return false;
         }
     }
 }

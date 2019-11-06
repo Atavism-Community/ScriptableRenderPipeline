@@ -82,7 +82,6 @@ namespace UnityEngine.Rendering.HighDefinition
 
         readonly PostProcessSystem m_PostProcessSystem;
         readonly XRSystem m_XRSystem;
-        readonly XRLayoutTest m_XRLayoutTest;
 
         bool m_FrameSettingsHistoryEnabled = false;
 
@@ -341,9 +340,6 @@ namespace UnityEngine.Rendering.HighDefinition
             RTHandles.Initialize(1, 1, m_Asset.currentPlatformRenderPipelineSettings.supportMSAA, m_Asset.currentPlatformRenderPipelineSettings.msaaSampleCount);
 
             m_XRSystem = new XRSystem(asset.renderPipelineResources.shaders);
-            if (XRSystem.testModeEnabled)
-                m_XRLayoutTest = new XRLayoutTest();
-
             m_GPUCopy = new GPUCopy(defaultResources.shaders.copyChannelCS);
             m_MipGenerator = new MipGenerator(defaultResources);
             m_BlueNoise = new BlueNoise(defaultResources);
@@ -834,7 +830,6 @@ namespace UnityEngine.Rendering.HighDefinition
             CleanupSubsurfaceScattering();
             m_SharedRTManager.Cleanup();
             m_XRSystem.Cleanup();
-            m_XRLayoutTest?.Cleanup();
             m_SkyManager.Cleanup();
             CleanupVolumetricLighting();
 
@@ -1168,8 +1163,6 @@ namespace UnityEngine.Rendering.HighDefinition
             }
             );
 
-            m_XRLayoutTest?.Update(m_DebugDisplaySettings.data.xrLayout);
-
             using (ListPool<RenderRequest>.Get(out List<RenderRequest> renderRequests))
             using (ListPool<int>.Get(out List<int> rootRenderRequestIndices))
             using (HashSetPool<int>.Get(out HashSet<int> skipClearCullingResults))
@@ -1178,7 +1171,7 @@ namespace UnityEngine.Rendering.HighDefinition
             using (ListPool<CameraPositionSettings>.Get(out List<CameraPositionSettings> cameraPositionSettings))
             {
                 // With XR multi-pass enabled, each camera can be rendered multiple times with different parameters
-                var multipassCameras = m_XRSystem.SetupFrame(cameras);
+                var multipassCameras = m_XRSystem.SetupFrame(cameras, m_DebugDisplaySettings.data.xrSinglePassTestMode);
 
 #if UNITY_EDITOR
                 // See comment below about the preview camera workaround

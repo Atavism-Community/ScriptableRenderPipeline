@@ -65,8 +65,6 @@ namespace UnityEngine.Rendering.HighDefinition
         static int[] s_MaterialFullScreenDebugValues = null;
         static GUIContent[] s_MsaaSamplesDebugStrings = null;
         static int[] s_MsaaSamplesDebugValues = null;
-        static GUIContent[] s_XrLayoutDebugStrings = null;
-        static int[] s_XrLayoutDebugValues = null;
 
         static List<GUIContent> s_CameraNames = new List<GUIContent>();
         static GUIContent[] s_CameraNamesStrings = null;
@@ -82,6 +80,7 @@ namespace UnityEngine.Rendering.HighDefinition
             public int fullScreenContactShadowLightIndex = 0;
             public bool showSSSampledColor = false;
             public bool showContactShadowFade = false;
+            public bool xrSinglePassTestMode = false;
 
             public MaterialDebugSettings materialDebugSettings = new MaterialDebugSettings();
             public LightingDebugSettings lightingDebugSettings = new LightingDebugSettings();
@@ -91,7 +90,6 @@ namespace UnityEngine.Rendering.HighDefinition
             public DecalsDebugSettings decalsDebugSettings = new DecalsDebugSettings();
             public TransparencyDebugSettings transparencyDebugSettings = new TransparencyDebugSettings();
             public MSAASamples msaaSamples = MSAASamples.None;
-            internal XRLayoutTest.Mode xrLayout = XRLayoutTest.Mode.Default;
 
             public uint screenSpaceShadowIndex = 0;
             // Raytracing
@@ -122,7 +120,6 @@ namespace UnityEngine.Rendering.HighDefinition
             public int colorPickerDebugModeEnumIndex;
             public int msaaSampleDebugModeEnumIndex;
             public int debugCameraToFreezeEnumIndex;
-            public int xrLayoutDebugModeEnumIndex;
 
             // When settings mutually exclusives enum values, we need to reset the other ones.
             public void ResetExclusiveEnumIndices()
@@ -158,11 +155,6 @@ namespace UnityEngine.Rendering.HighDefinition
                 .Select(t => new GUIContent(t))
                 .ToArray();
             s_MsaaSamplesDebugValues = (int[])Enum.GetValues(typeof(MSAASamples));
-
-            s_XrLayoutDebugStrings = Enum.GetNames(typeof(XRLayoutTest.Mode))
-                .Select(t => new GUIContent(t))
-                .ToArray();
-            s_XrLayoutDebugValues = (int[])Enum.GetValues(typeof(XRLayoutTest.Mode));
 
             m_Data = new DebugData();
         }
@@ -413,8 +405,8 @@ namespace UnityEngine.Rendering.HighDefinition
                 });
             }
 
-            list.Add(new DebugUI.BoolField { displayName = "Debug XR Layout", getter = () => XRSystem.printDebugInfo, setter = value => XRSystem.printDebugInfo = value, onValueChanged = RefreshDisplayStatsDebug });
-            if (XRSystem.printDebugInfo)
+            list.Add(new DebugUI.BoolField { displayName = "Debug XR Layout", getter = () => XRSystem.dumpDebugInfo, setter = value => XRSystem.dumpDebugInfo = value, onValueChanged = RefreshDisplayStatsDebug });
+            if (XRSystem.dumpDebugInfo)
             {
                 Func<object> Bind<T>(Func<T, object> func, T arg) => () => func(arg);
 
@@ -749,7 +741,7 @@ namespace UnityEngine.Rendering.HighDefinition
             var panel = DebugManager.instance.GetPanel(k_PanelLighting, true);
             panel.children.Add(m_DebugLightingItems);
         }
-        internal void RegisterRenderingDebug()
+        public void RegisterRenderingDebug()
         {
             var widgetList = new List<DebugUI.Widget>();
 
@@ -825,10 +817,7 @@ namespace UnityEngine.Rendering.HighDefinition
 
             if (XRSystem.testModeEnabled)
             {
-                widgetList.AddRange(new DebugUI.Widget[]
-                {
-                    new DebugUI.EnumField { displayName = "XR Layout", getter = () => (int)data.xrLayout, setter = value => data.xrLayout = (XRLayoutTest.Mode)value, enumNames = s_XrLayoutDebugStrings, enumValues = s_XrLayoutDebugValues, getIndex = () => data.xrLayoutDebugModeEnumIndex, setIndex = value => data.xrLayoutDebugModeEnumIndex = value },
-                });
+                widgetList.Add(new DebugUI.BoolField { displayName = "XR single-pass test mode", getter = () => data.xrSinglePassTestMode, setter = value => data.xrSinglePassTestMode = value });
             }
 
             m_DebugRenderingItems = widgetList.ToArray();
