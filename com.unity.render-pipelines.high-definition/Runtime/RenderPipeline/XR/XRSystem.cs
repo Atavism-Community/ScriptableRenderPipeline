@@ -372,7 +372,7 @@ namespace UnityEngine.Rendering.HighDefinition
                     for (int viewIndex = 0; viewIndex < pass.viewCount; viewIndex++)
                     {
                         var viewport = pass.GetViewport(viewIndex);
-                        passDebugInfos.Add(string.Format("Pass {0} Cull {1} View {2} Slice {3} : {4} x {5}",
+                        passDebugInfos.Add(string.Format("    Pass {0} Cull {1} View {2} Slice {3} : {4} x {5}",
                             pass.multipassId,
                             pass.cullingPassId,
                             viewIndex,
