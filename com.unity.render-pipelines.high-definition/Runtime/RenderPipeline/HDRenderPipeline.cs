@@ -1171,7 +1171,7 @@ namespace UnityEngine.Rendering.HighDefinition
             using (ListPool<CameraPositionSettings>.Get(out List<CameraPositionSettings> cameraPositionSettings))
             {
                 // With XR multi-pass enabled, each camera can be rendered multiple times with different parameters
-                var multipassCameras = m_XRSystem.SetupFrame(cameras, m_DebugDisplaySettings.data.xrSinglePassTestMode);
+                var multipassCameras = m_XRSystem.SetupFrame(cameras, m_Asset.currentPlatformRenderPipelineSettings.xrSettings.singlePass, m_DebugDisplaySettings.data.xrSinglePassTestMode);
 
 #if UNITY_EDITOR
                 // See comment below about the preview camera workaround

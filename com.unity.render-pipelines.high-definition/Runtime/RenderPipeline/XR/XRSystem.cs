@@ -101,7 +101,7 @@ namespace UnityEngine.Rendering.HighDefinition
             return maxViews;
         }
 
-        internal List<(Camera, XRPass)> SetupFrame(Camera[] cameras, bool singlePassTestModeActive)
+        internal List<(Camera, XRPass)> SetupFrame(Camera[] cameras, bool singlePassAllowed, bool singlePassTestModeActive)
         {
             bool xrSdkActive = RefreshXrSdk();
 
@@ -140,7 +140,7 @@ namespace UnityEngine.Rendering.HighDefinition
 
                     if (xrSdkActive)
                     {
-                        CreateLayoutFromXrSdk(camera);
+                        CreateLayoutFromXrSdk(camera, singlePassAllowed);
                     }
                     else
                     {
@@ -245,7 +245,7 @@ namespace UnityEngine.Rendering.HighDefinition
         }
 
 #if ENABLE_VR && ENABLE_XR_MODULE
-        void CreateLayoutFromXrSdk(Camera camera)
+        void CreateLayoutFromXrSdk(Camera camera, bool singlePassAllowed)
         {
             bool CanUseSinglePass(XRDisplaySubsystem.XRRenderPass renderPass)
             {
@@ -272,7 +272,7 @@ namespace UnityEngine.Rendering.HighDefinition
                 display.GetRenderPass(renderPassIndex, out var renderPass);
                 display.GetCullingParameters(camera, renderPass.cullingPassIndex, out var cullingParams);
 
-                if (CanUseSinglePass(renderPass))
+                if (singlePassAllowed && CanUseSinglePass(renderPass))
                 {
                     var xrPass = XRPass.Create(renderPass, multipassId: framePasses.Count, cullingParams, occlusionMeshMaterial);
 
