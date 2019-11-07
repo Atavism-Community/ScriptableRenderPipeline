@@ -40,8 +40,8 @@ public class HDRP_GraphicTestRunner
                 XRSystem.automatedTestRunning = true;
 
                 // Increase tolerance to account for slight changes due to float precision
-                settings.ImageComparisonSettings.AverageCorrectnessThreshold *= 1.5f;
-                settings.ImageComparisonSettings.PerPixelCorrectnessThreshold *= 1.5f;
+                settings.ImageComparisonSettings.AverageCorrectnessThreshold *= settings.xrThresholdMultiplier;
+                settings.ImageComparisonSettings.PerPixelCorrectnessThreshold *= settings.xrThresholdMultiplier;
             }
             else
             {
