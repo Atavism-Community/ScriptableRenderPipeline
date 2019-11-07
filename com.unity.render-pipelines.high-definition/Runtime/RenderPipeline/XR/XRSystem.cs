@@ -359,9 +359,9 @@ namespace UnityEngine.Rendering.HighDefinition
 #endif
         }
 
-        [Conditional("DEVELOPMENT_BUILD"), Conditional("UNITY_EDITOR")]
         void CaptureDebugInfo()
         {
+#if DEVELOPMENT_BUILD || UNITY_EDITOR
             if (dumpDebugInfo)
             {
                 passDebugInfos.Clear();
@@ -385,6 +385,7 @@ namespace UnityEngine.Rendering.HighDefinition
 
             while (passDebugInfos.Count < passDebugInfos.Capacity)
                 passDebugInfos.Add("inactive");
+#endif
         }
 
         bool LayoutSinglePassTestMode(XRLayout frameLayout)
